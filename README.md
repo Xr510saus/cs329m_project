@@ -1,5 +1,5 @@
 # Side-Effect Line Detection in C++
 
-'''console
+```console
 pip install tree-sitter
-'''
+```
