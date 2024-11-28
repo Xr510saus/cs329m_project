@@ -1,5 +1,8 @@
 # Side-Effect Line Detection in C++
 
-```console
-pip install tree-sitter
-```
+## Dependencies
+- pandas (pip)
+- tree-sitter (pip)
+- tree-sitter-cpp (pip)
+- transformers (pip)
+- torch (https://pytorch.org/get-started/locally/)
