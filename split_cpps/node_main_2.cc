@@ -1,0 +1,1 @@
+void SetCrashKeyStub(const std::string& key, const std::string& value) {}

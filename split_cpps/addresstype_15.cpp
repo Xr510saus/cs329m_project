@@ -1,0 +1,1 @@
+    bool operator()(const PKHash& dest) const { return true; }

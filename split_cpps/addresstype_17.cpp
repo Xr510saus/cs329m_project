@@ -1,0 +1,1 @@
+    bool operator()(const WitnessV0KeyHash& dest) const { return true; }

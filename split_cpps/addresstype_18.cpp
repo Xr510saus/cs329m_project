@@ -1,0 +1,1 @@
+    bool operator()(const WitnessV0ScriptHash& dest) const { return true; }

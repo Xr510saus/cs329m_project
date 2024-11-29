@@ -1,0 +1,1 @@
+    bool operator()(const WitnessUnknown& dest) const { return true; }

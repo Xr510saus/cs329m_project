@@ -1,0 +1,1 @@
+    bool operator()(const CNoDestination& dest) const { return false; }

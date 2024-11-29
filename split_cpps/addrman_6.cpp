@@ -1,0 +1,4 @@
+AddrManImpl::~AddrManImpl()
+{
+    nKey.SetNull();
+}
