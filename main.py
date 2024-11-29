@@ -55,14 +55,11 @@ def tokenize_batch(batch: tuple, tokenizer: AutoTokenizer)->list[torch.Tensor]:
             tokens += [tokenizer.eos_token] * padding
         else:
             tokens[-1] = tokenizer.eos_token
-            
-        # print(tokens)
         
         token_ids.append(tokenizer.convert_tokens_to_ids(tokens))
         
-    # print(token_ids, len(token))
-        
     return torch.tensor(token_ids, device=device)
+
 
 def train(args):
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
@@ -85,24 +82,7 @@ def train(args):
         for batch, (line, code, label) in enumerate(train_loader):
             tokenized_batch = tokenize_batch((line, code), tokenizer)
             
-            # for tb in tokenized_batch:
-            #     print(tb.shape)
-                
-            # print('\n')
-            # print(type(label))
-            # label.to(device)
-            # # pass
-            # # print(batch, x[0])
-            # # for i in x:
-            # #     print(type(i))
-            # print(label)
-            # labels = 
-                
-            # print('\n')
             y_pred = model(tokenized_batch)
-            
-            # print(y_pred)
-            
             loss = loss_fn(y_pred, label)
             
             loss.backward()
@@ -110,18 +90,20 @@ def train(args):
             optimizer.zero_grad()
             
             if batch % 100 == 0:
-                # loss, _ = loss.item()
                 print(f'Loss @ Epoch #{epoch+1} batch #{batch}: {loss}')
                 
         if (epoch+1) % 5 == 0:
             torch.save(model.state_dict(), f'{model_dir}/model_weights_epoch_{epoch+1}.pth')
             torch.save(model.state_dict(), f'{model_dir}/latest_model_weights.pth')
     
+    
 def eval():
     return
 
+
 def test():
     return
+    
     
 def main():
     parser = argparse.ArgumentParser()
