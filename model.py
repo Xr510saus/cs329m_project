@@ -3,9 +3,10 @@ import torch.nn as nn
 
 from transformers import AutoModel
 
-# Acquired directly from GraphCodeBERT's clonedetection model
-# https://github.com/microsoft/CodeBERT/blob/master/GraphCodeBERT/clonedetection/model.py
+BASE_MODEL = "microsoft/graphcodebert-base"
+NUM_CLASSES = 2
 
+# Acquired directly from GraphCodeBERT's clonedetection model from GitHub
 class RobertaClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""
 
@@ -13,7 +14,7 @@ class RobertaClassificationHead(nn.Module):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.out_proj = nn.Linear(config.hidden_size, 2)
+        self.out_proj = nn.Linear(config.hidden_size, NUM_CLASSES)
         self.config = config
 
     def forward(self, features, **kwargs):
@@ -31,12 +32,12 @@ class SideEffectClassificationModel(nn.Module):
         # pretrained is included in the model (not-frozen),
         # because some weights are not obtained from the model checkpoint
         # and thus re-initialized, so they need to be retrained
-        self.pretrained = AutoModel.from_pretrained("microsoft/graphcodebert-base")
+        self.pretrained = AutoModel.from_pretrained(BASE_MODEL)
         self.classifier = RobertaClassificationHead(config)
         self.softmax = nn.Softmax(dim=1)
         
-    def forward(self, x):
-        x = self.pretrained(x)[0]
+    def forward(self, x, attn_masks):
+        x = self.pretrained(x, attention_mask=attn_masks)[0]
         logits = self.classifier(x)
         y_pred = self.softmax(logits)
         return y_pred
