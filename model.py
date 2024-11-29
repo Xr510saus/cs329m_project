@@ -17,10 +17,7 @@ class RobertaClassificationHead(nn.Module):
         self.config = config
 
     def forward(self, features, **kwargs):
-        # print(features.shape)
         x = features[:, 0, :]  # take <s> token (equiv. to [CLS])
-        # x = x.reshape(-1,x.size(-1)*2)
-        # print(x.shape, self.config.hidden_size)
         x = self.dropout(x)
         x = self.dense(x)
         x = torch.tanh(x)
