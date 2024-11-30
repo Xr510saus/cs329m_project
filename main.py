@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 
+from typing import Callable
+from notebooks.utils import all_paths_exist
 from model import SideEffectClassificationModel
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, RobertaConfig
@@ -33,6 +35,7 @@ DEFAULT_SEED = 42
 
 MAX_SEQ_LEN = 512
 SCHEDULER_PATIENCE = 3
+BEST_MODEL_WEIGHTS = 'best_model_weights.pth'
 
 LINE_COL_IDX = 0
 CODE_COL_IDX = 1
@@ -95,15 +98,55 @@ def tokenize_batch(batch: tuple, tokenizer: AutoTokenizer)->list[torch.Tensor]:
         
     return token_ids, attn_masks
 
+def baseline_accuracy(data_file_path: str)->float:
+    data = CSVDataset(data_file_path)
+    loader = DataLoader(data, batch_size=1)
+    
+    size = len(loader.dataset)
+    correct = 0
+    
+    for _, _, label in loader:
+        if label.item() == 0:
+            correct += 1
+    
+    accuracy = correct / size        
+    
+    return accuracy
 
-def eval(model, tokenizer, eval_datafile_path, batch_size, loss_fn):
+# Never used
+def weighted_loss(y_pred, y):
+    cross_fn = nn.CrossEntropyLoss()
+    loss = cross_fn(y_pred, y)
+    weights = torch.tensor([[2.0], [1.0]], device=device)
+    loss += torch.matmul(y_pred, weights).sum()
+    return loss
+
+def convert_1d_label_to_2d(label: torch.Tensor)->torch.Tensor:
+    labels = []
+    for i in range(len(label)):
+        if label[i]:
+            labels.append([0, 1])
+        else:
+            labels.append([1, 0])
+    labels = torch.tensor(labels, device=device, dtype=torch.float32)
+    
+    return labels
+
+def eval(model: SideEffectClassificationModel, 
+         tokenizer: AutoTokenizer, 
+         eval_datafile_path: str, 
+         batch_size: int, 
+         loss_fn: Callable)->float:
+    
     model.eval()
     
     eval_data = CSVDataset(eval_datafile_path)
-    eval_loader = DataLoader(eval_data, batch_size=batch_size, shuffle=True)
+    eval_loader = DataLoader(eval_data, batch_size=batch_size, shuffle=False)
     
+    size = len(eval_loader.dataset)
     num_batches = len(eval_loader)
     eval_loss = 0
+    correct = 0
     
     with torch.no_grad():
         for line, code, label in eval_loader:
@@ -111,12 +154,17 @@ def eval(model, tokenizer, eval_datafile_path, batch_size, loss_fn):
                                                          tokenizer)
             
             y_pred = model(tokenized_batch, attn_masks=attn_masks)
-            eval_loss += loss_fn(y_pred, label)
+            labels = convert_1d_label_to_2d(label)
+    
+            eval_loss += loss_fn(y_pred, labels)
+            correct += (y_pred.argmax(dim=1) == label).type(torch.float).sum()
             
-    return eval_loss / num_batches
+    eval_loss /= num_batches
+    accuracy = correct / size
+    return eval_loss, accuracy
 
 
-def train(args):
+def train(args: argparse.Namespace)->None:
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     
     train_data = CSVDataset(args.train_data_file)
@@ -126,7 +174,7 @@ def train(args):
     
     config = RobertaConfig.from_pretrained(args.config_name)
     model = SideEffectClassificationModel(config).to(device=device)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), 
                                  lr=args.learning_rate, 
                                  eps=args.adam_epsilon)
@@ -134,11 +182,12 @@ def train(args):
         optimizer, 
         patience=args.scheduler_patience)
     
-    model_dir = f'{proj_dir}/{args.output_dir}'
+    model_dir = args.output_dir
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
         
     best_eval_loss = np.inf
+    baseline_eval_accuracy = baseline_accuracy(args.eval_data_file)
     
     for epoch in range(args.epochs):
         epoch_start_time = time.time()
@@ -149,8 +198,9 @@ def train(args):
                                                          tokenizer)
             
             y_pred = model(tokenized_batch, attn_masks=attn_masks)
-            loss = loss_fn(y_pred, label)
+            labels = convert_1d_label_to_2d(label)
             
+            loss = loss_fn(y_pred, labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 
                                            args.max_grad_norm)
@@ -163,28 +213,51 @@ def train(args):
         
         print(f'Duration for epoch training: {time.time() - epoch_start_time}')
         
-        eval_loss = eval(model, 
-                         tokenizer, 
-                         args.eval_data_file, 
-                         args.batch_size, 
-                         loss_fn)
+        eval_loss, accuracy = eval(model, 
+                                   tokenizer, 
+                                   args.eval_data_file, 
+                                   args.batch_size, 
+                                   loss_fn)
         print(f'Eval loss @ Epoch #{epoch}: {eval_loss}')
+        print(f'Accuracy: {accuracy} vs Baseline: {baseline_eval_accuracy}')
+        
+        scheduler.step(eval_loss)
         
         if eval_loss < best_eval_loss:
             torch.save(model.state_dict(), 
-                       f'{model_dir}/best_model_weights.pth')
+                       f'{model_dir}/{BEST_MODEL_WEIGHTS}')
             best_eval_loss = eval_loss
             
         torch.save(model.state_dict(), 
                    f'{model_dir}/model_weights_epoch_{epoch}.pth')
-            
-        scheduler.step(eval_loss)
         
         print(f'Epoch duration: {time.time() - epoch_start_time}\n')
 
 
-def test():
-    return
+def test(args: argparse.Namespace)->None:
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+    
+    test_data = CSVDataset(args.test_data_file)
+    test_loader = DataLoader(test_data, 
+                              batch_size=args.batch_size, 
+                              shuffle=True)
+    
+    config = RobertaConfig.from_pretrained(args.config_name)
+    model = SideEffectClassificationModel(config).to(device=device)
+    model_dir = args.output_dir
+    model.load_state_dict(torch.load(f'{model_dir}/{BEST_MODEL_WEIGHTS}', 
+                                     weights_only=True))
+    loss_fn = nn.CrossEntropyLoss()
+    
+    _, accuracy = eval(model, 
+                       tokenizer, 
+                       args.test_data_file, 
+                       args.batch_size, 
+                       loss_fn)
+    
+    baseline_test_accuracy = baseline_accuracy(args.test_data_file)
+    
+    print(f'Test Accuracy: {accuracy} vs Baseline: {baseline_test_accuracy}')
     
     
 def main():
@@ -220,17 +293,28 @@ def main():
                         type=float, help="Max gradient norm.")
     parser.add_argument("--scheduler_patience", default=SCHEDULER_PATIENCE, 
                         type=int, help="Patience for the lr scheduler.")
+    parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS,
+                        help="Training epochs.")
 
     parser.add_argument('--seed', type=int, default=DEFAULT_SEED,
                         help="Random seed for initialization.")
-    parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS,
-                        help="Training epochs.")
 
     args = parser.parse_args()
     
     if args.do_train:
+        train_path = args.train_data_file
+        eval_path = args.eval_data_file
+        if not all_paths_exist([train_path, eval_path]):
+            raise Exception(f'Missing "{train_path}" & "{eval_path}".')
+        
         train(args)
+        
     elif args.do_test:
+        test_path = args.test_data_file
+        out_path = args.output_dir
+        if not all_paths_exist([test_path, out_path]):
+            raise Exception(f'Missing "{test_path}" or "{out_path}".')
+        
         test(args)
             
 if __name__ == '__main__':
