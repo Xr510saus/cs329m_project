@@ -13,28 +13,34 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, RobertaConfig
 
 
-DEFAULT_DATASET = 'cutoff_dataset'
+LINE_DATASET = 'line_dataset'
+CUTOFF_DATASET = 'cutoff_dataset'
+AST_DATASET = 'ast_dataset'
+AST_NO_CODE_DATASET = 'ast_no_code_dataset'
+
+DEFAULT_DATASET = LINE_DATASET
 DEFAULT_DATASET_DIR = f'datasets/{DEFAULT_DATASET}'
 DEFAULT_TRAIN_FILE = f'{DEFAULT_DATASET_DIR}/train.csv'
 DEFAULT_EVAL_FILE = f'{DEFAULT_DATASET_DIR}/eval.csv'
 DEFAULT_TEST_FILE = f'{DEFAULT_DATASET_DIR}/test.csv'
+# DEFAULT_TEST_FILE = f'datasets/test_dataset/test.csv'
 DEFAULT_OUTPUT_DIR = f'{DEFAULT_DATASET}_saved_models'
 
 DEFAULT_CONFIG_NAME = 'microsoft/graphcodebert-base'
 DEFAULT_TOKENIZER = DEFAULT_CONFIG_NAME
 
-DEFAULT_TO_TRAIN = True
+DEFAULT_TO_TRAIN = False
 DEFAULT_TO_TEST = not DEFAULT_TO_TRAIN
 
 DEFAULT_LEARNING_RATE = 5e-5
 DEFAULT_BATCH_SIZE = 16 # empirically found to be most time efficient
-DEFAULT_EPOCHS = 10
+DEFAULT_EPOCHS = 50
 DEFAULT_EPSILON = 1e-8
 DEFAULT_MAX_GRAD_NORM = 1.0
 DEFAULT_SEED = 42
 
 MAX_SEQ_LEN = 512
-SCHEDULER_PATIENCE = 3
+SCHEDULER_PATIENCE = 5
 BEST_MODEL_WEIGHTS = 'best_model_weights.pth'
 
 LINE_COL_IDX = 0
@@ -113,14 +119,6 @@ def baseline_accuracy(data_file_path: str)->float:
     
     return accuracy
 
-# Never used
-def weighted_loss(y_pred, y):
-    cross_fn = nn.CrossEntropyLoss()
-    loss = cross_fn(y_pred, y)
-    weights = torch.tensor([[2.0], [1.0]], device=device)
-    loss += torch.matmul(y_pred, weights).sum()
-    return loss
-
 def convert_1d_label_to_2d(label: torch.Tensor)->torch.Tensor:
     labels = []
     for i in range(len(label)):
@@ -136,17 +134,21 @@ def eval(model: SideEffectClassificationModel,
          tokenizer: AutoTokenizer, 
          eval_datafile_path: str, 
          batch_size: int, 
-         loss_fn: Callable)->float:
+         loss_fn: Callable,
+         dataset: str)->float:
     
     model.eval()
     
     eval_data = CSVDataset(eval_datafile_path)
     eval_loader = DataLoader(eval_data, batch_size=batch_size, shuffle=False)
     
-    size = len(eval_loader.dataset)
     num_batches = len(eval_loader)
+    labeled_segments = []
     eval_loss = 0
-    correct = 0
+    tp = 0
+    tn = 0
+    fp = 0
+    fn = 0
     
     with torch.no_grad():
         for line, code, label in eval_loader:
@@ -157,14 +159,49 @@ def eval(model: SideEffectClassificationModel,
             labels = convert_1d_label_to_2d(label)
     
             eval_loss += loss_fn(y_pred, labels)
-            correct += (y_pred.argmax(dim=1) == label).type(torch.float).sum()
             
-    eval_loss /= num_batches
-    accuracy = correct / size
-    return eval_loss, accuracy
+            pred_labels = y_pred.argmax(dim=1)
+            for i in range(len(label)):
+                curr_label = label[i]
+                curr_pred = pred_labels[i].item()
+                
+                if curr_label == 1 and curr_pred == 1:
+                    tp += 1
+                elif curr_label == 1 and curr_pred == 0:
+                    fn += 1
+                elif curr_label == 0 and curr_pred == 1:
+                    fp += 1
+                else:
+                    tn += 1
+
+                if dataset == AST_DATASET or dataset == CUTOFF_DATASET:
+                    split_code = code[i].split('\t')
+                    segment = [split_code[-1], curr_pred]
+                elif dataset == LINE_DATASET:
+                    segment = [line[i], curr_pred]
+                else:
+                    segment = ['NO_MATCHING_DATASET', curr_pred]
+                    
+                labeled_segments.append(segment)
+            
+    avg_eval_loss = eval_loss / num_batches
+    accuracy = (tp + tn) / (tp + tn + fn + fp)
+    try:
+        precision = tp / (tp + fp)
+    except:
+        precision = np.inf
+    try:
+        recall = tp / (tp + fn)
+    except:
+        recall = np.inf
+    f1 = 2 * precision * recall / (precision + recall)
+    
+    return avg_eval_loss, accuracy, precision, recall, f1, labeled_segments
 
 
 def train(args: argparse.Namespace)->None:
+    dataset_name = os.path.basename(os.path.dirname(args.train_data_file))
+    
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     
     train_data = CSVDataset(args.train_data_file)
@@ -213,13 +250,21 @@ def train(args: argparse.Namespace)->None:
         
         print(f'Duration for epoch training: {time.time() - epoch_start_time}')
         
-        eval_loss, accuracy = eval(model, 
-                                   tokenizer, 
-                                   args.eval_data_file, 
-                                   args.batch_size, 
-                                   loss_fn)
+        (eval_loss, 
+         accuracy,
+         precision,
+         recall, 
+         f1, _) = eval(model, 
+                       tokenizer, 
+                       args.eval_data_file, 
+                       args.batch_size, 
+                       loss_fn,
+                       dataset_name)
         print(f'Eval loss @ Epoch #{epoch}: {eval_loss}')
         print(f'Accuracy: {accuracy} vs Baseline: {baseline_eval_accuracy}')
+        print(f'Precision: {precision}')
+        print(f'Recall: {recall}')
+        print(f'F1 Score: {f1}')
         
         scheduler.step(eval_loss)
         
@@ -234,30 +279,40 @@ def train(args: argparse.Namespace)->None:
         print(f'Epoch duration: {time.time() - epoch_start_time}\n')
 
 
-def test(args: argparse.Namespace)->None:
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+def test(args: argparse.Namespace, dataset_dir: str = None)->None:
+    dataset_name = os.path.basename(os.path.dirname(args.test_data_file))
+    if dataset_dir == None:
+        dataset_dir = f'datasets/{dataset_name}'
     
-    test_data = CSVDataset(args.test_data_file)
-    test_loader = DataLoader(test_data, 
-                              batch_size=args.batch_size, 
-                              shuffle=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     
     config = RobertaConfig.from_pretrained(args.config_name)
     model = SideEffectClassificationModel(config).to(device=device)
     model_dir = args.output_dir
     model.load_state_dict(torch.load(f'{model_dir}/{BEST_MODEL_WEIGHTS}', 
                                      weights_only=True))
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.MSELoss()
     
-    _, accuracy = eval(model, 
-                       tokenizer, 
-                       args.test_data_file, 
-                       args.batch_size, 
-                       loss_fn)
+    (_, 
+     accuracy,
+     precision,
+     recall, 
+     f1, labeled_segments) = eval(model, 
+                                  tokenizer, 
+                                  args.test_data_file, 
+                                  args.batch_size, 
+                                  loss_fn,
+                                  dataset_name)
     
     baseline_test_accuracy = baseline_accuracy(args.test_data_file)
     
     print(f'Test Accuracy: {accuracy} vs Baseline: {baseline_test_accuracy}')
+    print(f'Precision: {precision}')
+    print(f'Recall: {recall}')
+    print(f'F1 Score: {f1}')
+    
+    df = pd.DataFrame(labeled_segments, columns=['code', 'label'])
+    df.to_csv(f'{dataset_dir}/labeled.csv', index=False)
     
     
 def main():
