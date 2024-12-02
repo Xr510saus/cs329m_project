@@ -33,8 +33,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def load_model_weights(config_name: str,
-                       model_weights_path: str)->SideEffectClassificationModel:
-    
+                       model_weights_path: str)->SideEffectClassificationModel:    
     config = RobertaConfig.from_pretrained(config_name)
     model = SideEffectClassificationModel(config).to(device)
     model.load_state_dict(torch.load(model_weights_path, weights_only=True))
@@ -182,9 +181,7 @@ def main():
         print(f'Precision: {precision}')
         print(f'Recall: {recall}')
         print(f'F1 Score: {f1}')
-            
-    
-    
+       
     labeled_segments = np.array(labeled_segments)
     df = pd.DataFrame(labeled_segments, columns=COL_NAMES)
     csv_path = f'{test_set_dir}/{test_set_name}_{input_type}_predicted.csv'
@@ -196,6 +193,7 @@ def main():
     json_path = f'{test_set_dir}/{test_set_name}_{input_type}_predicted.json'
     with open(json_path, 'w') as label_list_json:
         json.dump(label_list, label_list_json)
+
 
 if __name__ == '__main__':
     main()

@@ -23,7 +23,6 @@ DEFAULT_DATASET_DIR = f'datasets/{DEFAULT_DATASET}'
 DEFAULT_TRAIN_FILE = f'{DEFAULT_DATASET_DIR}/train.csv'
 DEFAULT_EVAL_FILE = f'{DEFAULT_DATASET_DIR}/eval.csv'
 DEFAULT_TEST_FILE = f'{DEFAULT_DATASET_DIR}/test.csv'
-# DEFAULT_TEST_FILE = f'datasets/test_dataset/test.csv'
 DEFAULT_OUTPUT_DIR = f'{DEFAULT_DATASET}_saved_models'
 
 DEFAULT_CONFIG_NAME = 'microsoft/graphcodebert-base'
