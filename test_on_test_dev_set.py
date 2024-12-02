@@ -1,12 +1,12 @@
 import os
+import json
 import torch
 import argparse
 import numpy as np
 import pandas as pd
-import tree_sitter as ts
 import tree_sitter_cpp as tscpp
 
-from main import test, tokenize_batch
+from main import tokenize_batch
 from tree_sitter import Language, Parser
 from notebooks.utils import all_paths_exist
 from model import SideEffectClassificationModel
@@ -20,7 +20,7 @@ CUTOFF_DATASET = 'cutoff_dataset'
 AST_DATASET = 'ast_dataset'
 AST_NO_CODE_DATASET = 'ast_no_code_dataset'
 
-SET_NAME = 'register_core_types'
+SET_NAME = 'ASTNode'
 DESIRED_INPUT_TYPE_DATASET = LINE_DATASET
 
 DEFAULT_CONFIG_NAME = 'microsoft/graphcodebert-base'
@@ -57,7 +57,8 @@ def main():
     
     args = parser.parse_args()
     
-    test_set_dir = f'dev_test_set/{args.test_set_name}'
+    test_set_name = args.test_set_name
+    test_set_dir = f'dev_test_set/{test_set_name}'
     code_dir = f'{test_set_dir}/{CODE_DIR_NAME}'
     label_dir = f'{test_set_dir}/{LABEL_DIR_NAME}'
     
@@ -95,6 +96,9 @@ def main():
     input_type = args.desired_input_type_dataset
     model_dir_name = f'{input_type}_saved_models'
     model_weights_path = f'{model_dir_name}/{BEST_MODEL_WEIGHTS}'
+    if not all_paths_exist([model_weights_path]):
+        err = f'Missing "{model_weights_path}".'
+        raise Exception(err)
     model = load_model_weights(args.config_name,
                                 model_weights_path)
     model.eval()
@@ -102,7 +106,8 @@ def main():
     lang_parser = Parser(Language(tscpp.language()))
     
     with (open(code_file_name, 'r') as code_file, 
-          open(label_file_name, 'r') as label_file):
+          open(label_file_name, 'r') as label_file,
+          torch.no_grad()):
         code = code_file.read().split('\n')
         labels = label_file.read().split('\n')
         
@@ -146,9 +151,8 @@ def main():
             (tokenized_batch, 
             attn_masks) = tokenize_batch(([curr_line], [curr_code]), tokenizer)
             
-            with torch.no_grad():
-                y_pred = model(tokenized_batch, attn_masks=attn_masks)
-                y_pred_label = y_pred.argmax().item()
+            y_pred = model(tokenized_batch, attn_masks=attn_masks)
+            y_pred_label = y_pred.argmax().item()
 
             curr_label = int(labels[i])
             if y_pred_label == 1 and curr_label == 1:
@@ -179,8 +183,19 @@ def main():
         print(f'Recall: {recall}')
         print(f'F1 Score: {f1}')
             
+    
+    
+    labeled_segments = np.array(labeled_segments)
     df = pd.DataFrame(labeled_segments, columns=COL_NAMES)
-    df.to_csv(f'{test_set_dir}/labeled.csv', index=False)
+    csv_path = f'{test_set_dir}/{test_set_name}_{input_type}_predicted.csv'
+    df.to_csv(csv_path, index=False)
+    
+    predicted_labels = np.array(labeled_segments[:, 1], dtype=np.int32)
+    label_list = dict()
+    label_list['labels'] = predicted_labels.tolist()
+    json_path = f'{test_set_dir}/{test_set_name}_{input_type}_predicted.json'
+    with open(json_path, 'w') as label_list_json:
+        json.dump(label_list, label_list_json)
 
 if __name__ == '__main__':
     main()
