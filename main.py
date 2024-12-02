@@ -273,8 +273,8 @@ def train(args: argparse.Namespace)->None:
                        f'{model_dir}/{BEST_MODEL_WEIGHTS}')
             best_eval_loss = eval_loss
             
-        torch.save(model.state_dict(), 
-                   f'{model_dir}/model_weights_epoch_{epoch}.pth')
+        # torch.save(model.state_dict(), 
+        #            f'{model_dir}/model_weights_epoch_{epoch}.pth')
         
         print(f'Epoch duration: {time.time() - epoch_start_time}\n')
 
