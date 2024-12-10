@@ -6,11 +6,10 @@ import numpy as np
 import pandas as pd
 import tree_sitter_cpp as tscpp
 
-from main import tokenize_batch
+from transformers import AutoTokenizer
 from tree_sitter import Language, Parser
 from notebooks.utils import all_paths_exist
-from model import SideEffectClassificationModel
-from transformers import AutoTokenizer, RobertaConfig
+from main import tokenize_batch, load_model_weights
 
 
 CODE_DIR_NAME = 'CPP_Files'
@@ -32,15 +31,6 @@ COL_NAMES = ['line', 'label']
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def load_model_weights(config_name: str,
-                       model_weights_path: str)->SideEffectClassificationModel:    
-    config = RobertaConfig.from_pretrained(config_name)
-    model = SideEffectClassificationModel(config).to(device)
-    model.load_state_dict(torch.load(model_weights_path, weights_only=True))
-    
-    return model
-
-
 def main():
     parser = argparse.ArgumentParser()
     
@@ -58,8 +48,6 @@ def main():
     
     test_set_name = args.test_set_name
     test_set_dir = f'dev_test_set/{test_set_name}'
-    # code_dir = f'{test_set_dir}/{CODE_DIR_NAME}'
-    # label_dir = f'{test_set_dir}/{LABEL_DIR_NAME}'
     code_dir = test_set_dir
     label_dir = test_set_dir
     
@@ -105,7 +93,8 @@ def main():
         err = f'Missing "{model_weights_path}".'
         raise Exception(err)
     model = load_model_weights(args.config_name,
-                                model_weights_path)
+                               model_weights_path,
+                               device)
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     lang_parser = Parser(Language(tscpp.language()))

@@ -129,6 +129,16 @@ def convert_1d_label_to_2d(label: torch.Tensor)->torch.Tensor:
     
     return labels
 
+def load_model_weights(config_name: str,
+                       model_weights_path: str,
+                       m_device: torch.device)->SideEffectClassificationModel:
+    
+    config = RobertaConfig.from_pretrained(config_name)
+    model = SideEffectClassificationModel(config).to(m_device)
+    model.load_state_dict(torch.load(model_weights_path, weights_only=True))
+    
+    return model
+
 def eval(model: SideEffectClassificationModel, 
          tokenizer: AutoTokenizer, 
          eval_datafile_path: str, 
@@ -285,11 +295,11 @@ def test(args: argparse.Namespace, dataset_dir: str = None)->None:
     
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     
-    config = RobertaConfig.from_pretrained(args.config_name)
-    model = SideEffectClassificationModel(config).to(device=device)
     model_dir = args.output_dir
-    model.load_state_dict(torch.load(f'{model_dir}/{BEST_MODEL_WEIGHTS}', 
-                                     weights_only=True))
+    model_weights_path = f'{model_dir}/{BEST_MODEL_WEIGHTS}'
+    model = load_model_weights(args.config_name,
+                               model_weights_path,
+                               device)
     loss_fn = nn.MSELoss()
     
     (_, 
