@@ -20,7 +20,7 @@ CUTOFF_DATASET = 'cutoff_dataset'
 AST_DATASET = 'ast_dataset'
 AST_NO_CODE_DATASET = 'ast_no_code_dataset'
 
-SET_NAME = 'ASTNode'
+SET_NAME = 'ASTNode copy'
 DESIRED_INPUT_TYPE_DATASET = LINE_DATASET
 
 DEFAULT_CONFIG_NAME = 'microsoft/graphcodebert-base'
@@ -58,11 +58,13 @@ def main():
     
     test_set_name = args.test_set_name
     test_set_dir = f'dev_test_set/{test_set_name}'
-    code_dir = f'{test_set_dir}/{CODE_DIR_NAME}'
-    label_dir = f'{test_set_dir}/{LABEL_DIR_NAME}'
+    # code_dir = f'{test_set_dir}/{CODE_DIR_NAME}'
+    # label_dir = f'{test_set_dir}/{LABEL_DIR_NAME}'
+    code_dir = test_set_dir
+    label_dir = test_set_dir
     
-    if not all_paths_exist([code_dir, label_dir]):
-        err = f'Missing "{code_dir}" or "{label_dir}".'
+    if not all_paths_exist([code_dir]):
+        err = f'Missing "{code_dir}".'
         raise Exception(err)
 
     file_name = ''
@@ -88,9 +90,13 @@ def main():
     code_file_name = f'{code_dir}/{file_name}.{extension_tracker[file_name]}'
     label_file_name = f'{label_dir}/{file_name}.txt'
     
-    if not all_paths_exist([code_file_name, label_file_name]):
-        err = f'Missing "{code_file_name}" or "{label_file_name}".'
+    if not all_paths_exist([code_file_name]):
+        err = f'Missing "{code_file_name}".'
         raise Exception(err)
+    
+    if not all_paths_exist([label_file_name]):
+        print(f'Missing {label_file_name}, setting to None.')
+        label_file_name = None
     
     input_type = args.desired_input_type_dataset
     model_dir_name = f'{input_type}_saved_models'
@@ -105,12 +111,13 @@ def main():
     lang_parser = Parser(Language(tscpp.language()))
     
     with (open(code_file_name, 'r') as code_file, 
-          open(label_file_name, 'r') as label_file,
           torch.no_grad()):
         code = code_file.read().split('\n')
-        labels = label_file.read().split('\n')
         
-        assert(len(code) == len(labels))
+        if label_file_name:
+            with open(label_file_name, 'r') as label_file:
+                labels = label_file.read().split('\n')
+            assert(len(code) == len(labels))
         
         tp = 0
         tn = 0
@@ -153,34 +160,39 @@ def main():
             y_pred = model(tokenized_batch, attn_masks=attn_masks)
             y_pred_label = y_pred.argmax().item()
 
-            curr_label = int(labels[i])
-            if y_pred_label == 1 and curr_label == 1:
-                tp += 1
-            elif y_pred_label == 1 and curr_label == 0:
-                fp += 1
-            elif y_pred_label == 0 and curr_label == 1 :
-                fn += 1
-            else:
-                tn += 1
+            if label_file_name:
+                curr_label = int(labels[i])
+                if y_pred_label == 1 and curr_label == 1:
+                    tp += 1
+                elif y_pred_label == 1 and curr_label == 0:
+                    fp += 1
+                elif y_pred_label == 0 and curr_label == 1 :
+                    fn += 1
+                else:
+                    tn += 1
             
             segment = [code[i], y_pred_label]
             labeled_segments.append(segment)
-            
-        accuracy = (tp + tn) / (tp + tn + fn + fp)
-        try:
-            precision = tp / (tp + fp)
-        except:
-            precision = np.inf
-        try:
-            recall = tp / (tp + fn)
-        except:
-            recall = np.inf
-        f1 = 2 * precision * recall / (precision + recall)
         
-        print(f'Accuracy: {accuracy}')
-        print(f'Precision: {precision}')
-        print(f'Recall: {recall}')
-        print(f'F1 Score: {f1}')
+        if label_file_name:   
+            accuracy = (tp + tn) / (tp + tn + fn + fp)
+            try:
+                precision = tp / (tp + fp)
+            except:
+                precision = np.inf
+            try:
+                recall = tp / (tp + fn)
+            except:
+                recall = np.inf
+            try:
+                f1 = 2 * precision * recall / (precision + recall)
+            except:
+                f1 = np.inf
+            
+            print(f'Accuracy: {accuracy}')
+            print(f'Precision: {precision}')
+            print(f'Recall: {recall}')
+            print(f'F1 Score: {f1}')
        
     labeled_segments = np.array(labeled_segments)
     df = pd.DataFrame(labeled_segments, columns=COL_NAMES)
