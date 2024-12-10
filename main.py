@@ -65,7 +65,19 @@ class CSVDataset(Dataset):
         return line, code, label
     
     
-def tokenize_batch(batch: tuple, tokenizer: AutoTokenizer)->list[torch.Tensor]:
+def tokenize_batch(batch: tuple, 
+                   tokenizer: AutoTokenizer)->tuple[torch.Tensor, 
+                                                    torch.Tensor]:
+    '''
+    Convert tuple of (lines, code) into tokens and truncate.
+    
+    Inputs: batch - batch of lines (shape [batch_size,:]) and code
+                    (shape [batch_size,:])
+            tokenizer - Tokenizer to tokenize text
+            
+    Output: token_ids - Tokenized batch
+            attn_masks - Attention masks for tokenized batch
+    '''
     token_ids = []
     attn_masks = []
     
@@ -104,6 +116,13 @@ def tokenize_batch(batch: tuple, tokenizer: AutoTokenizer)->list[torch.Tensor]:
     return token_ids, attn_masks
 
 def baseline_accuracy(data_file_path: str)->float:
+    '''
+    Calculate the baseline accuracy (all 0s) for a label file.
+    
+    Input: data_file_path - Path to CSV containing labels
+    
+    Output: accuracy - Calculated baseline accuracy
+    '''
     data = CSVDataset(data_file_path)
     loader = DataLoader(data, batch_size=1)
     
@@ -119,6 +138,13 @@ def baseline_accuracy(data_file_path: str)->float:
     return accuracy
 
 def convert_1d_label_to_2d(label: torch.Tensor)->torch.Tensor:
+    '''
+    Converts 1D array of labels into 2D array. Reverse of argmax.
+    
+    Input: label - 1D array of labels (0 or 1)
+    
+    Output: labels - 2D array of labels ([1, 0] or [0, 1])
+    '''
     labels = []
     for i in range(len(label)):
         if label[i]:
@@ -132,6 +158,15 @@ def convert_1d_label_to_2d(label: torch.Tensor)->torch.Tensor:
 def load_model_weights(config_name: str,
                        model_weights_path: str,
                        m_device: torch.device)->SideEffectClassificationModel:
+    '''
+    Create a SideEffectClassificationModel and load it with pretrained weights.
+    
+    Inputs: config_name - Config used for the SideEffectClassificationModel
+            model_weights_path - Path to the pretrained model weights
+            m_device - Device to send the model to
+            
+    Output: model - The loaded SideEffectClassificationModel
+    '''
     
     config = RobertaConfig.from_pretrained(config_name)
     model = SideEffectClassificationModel(config).to(m_device)
@@ -144,7 +179,27 @@ def eval(model: SideEffectClassificationModel,
          eval_datafile_path: str, 
          batch_size: int, 
          loss_fn: Callable,
-         dataset: str)->float:
+         dataset: str)->tuple[float, float, float, float, float, list]:
+    '''
+    Evaluate a model against a eval/test set.
+    
+    Inputs: model - The model (with weights loaded) to be evaluated
+            tokenizer - The tokenizer to use to tokenize inputs
+            eval_datafile_path - Path to CSV file containing eval/test data
+            batch_size - Batch size for inputs to the model
+            loss_fn - Loss function to calculate eval/test loss
+            dataset - Dataset being evaluated. This is used to generate
+                      files showing which labels were given to which line.
+                      
+    Outputs: avg_eval_loss - Mean loss of the entire eval/test set
+             accuracy - Computed accuracy of the model
+             precision - Computed precision of the model
+             Recall - Computed recall of the model
+             f1 - Computed F1 score of the model
+             labeled_segments - List containing theoretical last line of code
+                                that was labeled. Differs depending on 
+                                dataset.
+    '''
     
     model.eval()
     
@@ -209,6 +264,13 @@ def eval(model: SideEffectClassificationModel,
 
 
 def train(args: argparse.Namespace)->None:
+    '''
+    Train a SideEffectClassificationModel.
+    
+    Input: args - Passed in arguments (or default arguments listed at the top)
+    
+    Output: None
+    '''
     dataset_name = os.path.basename(os.path.dirname(args.train_data_file))
     
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
@@ -288,10 +350,19 @@ def train(args: argparse.Namespace)->None:
         print(f'Epoch duration: {time.time() - epoch_start_time}\n')
 
 
-def test(args: argparse.Namespace, dataset_dir: str = None)->None:
+def test(args: argparse.Namespace, label_output_dir: str = None)->None:
+    '''
+    Test a pretrained model against a test set.
+    
+    Inputs: args - Passed in arguments (or default arguments listed at the top)
+            label_output_dir - Argument to be used if a different directory is
+                               desired for creating the label outputs
+                               
+    Output: None
+    '''
     dataset_name = os.path.basename(os.path.dirname(args.test_data_file))
-    if dataset_dir == None:
-        dataset_dir = f'datasets/{dataset_name}'
+    if label_output_dir == None:
+        label_output_dir = f'datasets/{dataset_name}'
     
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     
@@ -321,7 +392,7 @@ def test(args: argparse.Namespace, dataset_dir: str = None)->None:
     print(f'F1 Score: {f1}')
     
     df = pd.DataFrame(labeled_segments, columns=['code', 'label'])
-    df.to_csv(f'{dataset_dir}/labeled.csv', index=False)
+    df.to_csv(f'{label_output_dir}/labeled.csv', index=False)
     
     
 def main():
